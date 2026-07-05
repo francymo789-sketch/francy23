@@ -1,9 +1,14 @@
-import json
-import os
+"""Control de inventario de repuestos para maquinaria pesada."""
+
+from __future__ import annotations
+
+import math
+import unicodedata
+
+from almacenamiento import cargar_lista, guardar_lista
 
 ARCHIVO_STOCK = "stock.json"
-
-CATEGORIAS_REPUESTO = [
+CATEGORIAS_REPUESTO = (
     "Motor",
     "Hidráulico",
     "Eléctrico",
@@ -12,187 +17,159 @@ CATEGORIAS_REPUESTO = [
     "Filtros",
     "Neumáticos",
     "Lubricantes",
-    "Otro"
-]
-
-def cargar_stock():
-    """Carga la lista de repuestos desde un archivo JSON."""
-    if not os.path.exists(ARCHIVO_STOCK):
-        return []
-
-    try:
-        with open(ARCHIVO_STOCK, "r", encoding="utf-8") as archivo:
-            datos = json.load(archivo)
-
-            if isinstance(datos, list):
-                return datos
-
-            return []
-
-    except json.JSONDecodeError:
-        return []
+    "Otro",
+)
 
 
-def guardar_stock(lista_stock):
-    """Guarda la lista de repuestos en un archivo JSON."""
-    with open(ARCHIVO_STOCK, "w", encoding="utf-8") as archivo:
-        json.dump(lista_stock, archivo, indent=4, ensure_ascii=False)
+def _normalizar_comparacion(valor: object) -> str:
+    texto = unicodedata.normalize("NFKD", str(valor).strip().lower())
+    return "".join(letra for letra in texto if not unicodedata.combining(letra))
 
 
-def validar_texto_stock(valor, nombre_campo):
-    """Valida que un campo obligatorio no esté vacío."""
+def cargar_stock() -> list[dict]:
+    return cargar_lista(ARCHIVO_STOCK)
+
+
+def guardar_stock(lista_stock: list[dict]) -> None:
+    guardar_lista(ARCHIVO_STOCK, lista_stock)
+
+
+def validar_texto_stock(valor: object, nombre_campo: str) -> tuple[bool, str]:
     if not isinstance(valor, str):
         return False, f"El campo {nombre_campo} debe ser texto."
-
     if valor.strip() == "":
         return False, f"El campo {nombre_campo} no puede estar vacío."
-
     return True, ""
 
 
-def validar_entero_stock(valor, nombre_campo):
-    """Valida que un valor sea entero y no negativo."""
+def validar_entero_stock(valor: object, nombre_campo: str) -> tuple[bool, str]:
+    if isinstance(valor, bool):
+        return False, f"El campo {nombre_campo} debe ser un número entero."
     try:
         numero = int(valor)
-
-        if numero < 0:
-            return False, f"El campo {nombre_campo} no puede ser negativo."
-
-        return True, ""
-
-    except ValueError:
+    except (TypeError, ValueError):
         return False, f"El campo {nombre_campo} debe ser un número entero."
-
-
-def validar_precio_stock(precio_unitario):
-    """Valida que el precio unitario sea numérico y no negativo."""
-    try:
-        precio_convertido = float(precio_unitario)
-
-        if precio_convertido < 0:
-            return False, "El precio unitario no puede ser negativo."
-
-        return True, ""
-
-    except ValueError:
-        return False, "El precio unitario debe ser numérico."
-
-
-def validar_categoria_stock(categoria):
-    """Valida que la categoría del repuesto esté permitida."""
-    es_valido, mensaje = validar_texto_stock(categoria, "categoría")
-
-    if not es_valido:
-        return False, mensaje
-
-    if categoria.strip() not in CATEGORIAS_REPUESTO:
-        return False, "La categoría del repuesto no es válida."
-
+    if isinstance(valor, float) and not valor.is_integer():
+        return False, f"El campo {nombre_campo} debe ser un número entero."
+    if numero < 0:
+        return False, f"El campo {nombre_campo} no puede ser negativo."
     return True, ""
 
 
-def existe_codigo_repuesto(lista_stock, codigo_repuesto):
-    """Verifica si ya existe un repuesto con el mismo código."""
-    for repuesto in lista_stock:
-        if repuesto["codigo_repuesto"].lower() == codigo_repuesto.strip().lower():
-            return True
+def validar_precio_stock(precio_unitario: object) -> tuple[bool, str]:
+    if isinstance(precio_unitario, bool):
+        return False, "El precio unitario debe ser numérico."
+    try:
+        precio = float(precio_unitario)
+    except (TypeError, ValueError):
+        return False, "El precio unitario debe ser numérico."
+    if not math.isfinite(precio):
+        return False, "El precio unitario debe ser un número finito."
+    if precio < 0:
+        return False, "El precio unitario no puede ser negativo."
+    return True, ""
 
-    return False
+
+def _categoria_canonica(categoria: object) -> str | None:
+    normalizado = _normalizar_comparacion(categoria)
+    for permitida in CATEGORIAS_REPUESTO:
+        if _normalizar_comparacion(permitida) == normalizado:
+            return permitida
+    return None
+
+
+def validar_categoria_stock(categoria: object) -> tuple[bool, str]:
+    es_valido, mensaje = validar_texto_stock(categoria, "categoría")
+    if not es_valido:
+        return False, mensaje
+    if _categoria_canonica(categoria) is None:
+        return False, "La categoría del repuesto no es válida."
+    return True, ""
+
+
+def existe_codigo_repuesto(lista_stock: list[dict], codigo_repuesto: object) -> bool:
+    if not isinstance(codigo_repuesto, str) or not codigo_repuesto.strip():
+        return False
+    codigo = codigo_repuesto.strip().upper()
+    return any(str(item.get("codigo_repuesto", "")).upper() == codigo for item in lista_stock)
 
 
 def crear_repuesto(
-    codigo_repuesto,
-    nombre,
-    categoria,
-    marca,
-    modelo_compatible,
-    cantidad,
-    stock_minimo,
-    precio_unitario,
-    proveedor
-):
-    """Crea un diccionario con los datos del repuesto."""
-    repuesto = {
-        "codigo_repuesto": codigo_repuesto.strip().upper(),
-        "nombre": nombre.strip(),
-        "categoria": categoria.strip(),
-        "marca": marca.strip(),
-        "modelo_compatible": modelo_compatible.strip(),
+    codigo_repuesto: object,
+    nombre: object,
+    categoria: object,
+    marca: object,
+    modelo_compatible: object,
+    cantidad: object,
+    stock_minimo: object,
+    precio_unitario: object,
+    proveedor: object,
+) -> dict:
+    return {
+        "codigo_repuesto": str(codigo_repuesto).strip().upper(),
+        "nombre": str(nombre).strip(),
+        "categoria": _categoria_canonica(categoria),
+        "marca": str(marca).strip(),
+        "modelo_compatible": str(modelo_compatible).strip(),
         "cantidad": int(cantidad),
         "stock_minimo": int(stock_minimo),
         "precio_unitario": float(precio_unitario),
-        "proveedor": proveedor.strip()
+        "proveedor": str(proveedor).strip(),
     }
-
-    return repuesto
 
 
 def validar_datos_repuesto(
-    codigo_repuesto,
-    nombre,
-    categoria,
-    marca,
-    modelo_compatible,
-    cantidad,
-    stock_minimo,
-    precio_unitario,
-    proveedor
-):
-    """Valida todos los datos antes de registrar un repuesto."""
-    campos_texto = {
+    codigo_repuesto: object,
+    nombre: object,
+    categoria: object,
+    marca: object,
+    modelo_compatible: object,
+    cantidad: object,
+    stock_minimo: object,
+    precio_unitario: object,
+    proveedor: object,
+) -> tuple[bool, str]:
+    for nombre_campo, valor in {
         "código de repuesto": codigo_repuesto,
         "nombre": nombre,
         "categoría": categoria,
         "marca": marca,
         "modelo compatible": modelo_compatible,
-        "proveedor": proveedor
-    }
-
-    for nombre_campo, valor in campos_texto.items():
+        "proveedor": proveedor,
+    }.items():
         es_valido, mensaje = validar_texto_stock(valor, nombre_campo)
+        if not es_valido:
+            return False, mensaje
 
+    for funcion, valor, nombre_campo in (
+        (validar_entero_stock, cantidad, "cantidad"),
+        (validar_entero_stock, stock_minimo, "stock mínimo"),
+    ):
+        es_valido, mensaje = funcion(valor, nombre_campo)
         if not es_valido:
             return False, mensaje
 
     es_valido, mensaje = validar_categoria_stock(categoria)
-
     if not es_valido:
         return False, mensaje
-
-    es_valido, mensaje = validar_entero_stock(cantidad, "cantidad")
-
-    if not es_valido:
-        return False, mensaje
-
-    es_valido, mensaje = validar_entero_stock(stock_minimo, "stock mínimo")
-
-    if not es_valido:
-        return False, mensaje
-
-    if int(stock_minimo) > int(cantidad):
-        return False, "El stock mínimo no puede ser mayor que la cantidad inicial."
-
     es_valido, mensaje = validar_precio_stock(precio_unitario)
-
     if not es_valido:
         return False, mensaje
-
     return True, ""
 
 
 def registrar_repuesto(
-    lista_stock,
-    codigo_repuesto,
-    nombre,
-    categoria,
-    marca,
-    modelo_compatible,
-    cantidad,
-    stock_minimo,
-    precio_unitario,
-    proveedor
-):
-    """Registra un repuesto nuevo en el inventario."""
+    lista_stock: list[dict],
+    codigo_repuesto: object,
+    nombre: object,
+    categoria: object,
+    marca: object,
+    modelo_compatible: object,
+    cantidad: object,
+    stock_minimo: object,
+    precio_unitario: object,
+    proveedor: object,
+) -> tuple[bool, str]:
     es_valido, mensaje = validar_datos_repuesto(
         codigo_repuesto,
         nombre,
@@ -202,16 +179,14 @@ def registrar_repuesto(
         cantidad,
         stock_minimo,
         precio_unitario,
-        proveedor
+        proveedor,
     )
-
     if not es_valido:
         return False, mensaje
-
     if existe_codigo_repuesto(lista_stock, codigo_repuesto):
         return False, "Ya existe un repuesto registrado con ese código."
 
-    nuevo_repuesto = crear_repuesto(
+    nuevo = crear_repuesto(
         codigo_repuesto,
         nombre,
         categoria,
@@ -220,140 +195,148 @@ def registrar_repuesto(
         cantidad,
         stock_minimo,
         precio_unitario,
-        proveedor
+        proveedor,
     )
-
-    lista_stock.append(nuevo_repuesto)
+    lista_stock.append(nuevo)
     guardar_stock(lista_stock)
-
     return True, "Repuesto registrado correctamente."
 
 
-def listar_stock(lista_stock):
-    """Devuelve la lista completa del inventario."""
+def listar_stock(lista_stock: list[dict]) -> list[dict]:
     return lista_stock
 
 
-def buscar_repuesto_por_codigo(lista_stock, codigo_repuesto):
-    """Busca un repuesto por su código."""
+def buscar_repuesto_por_codigo(lista_stock: list[dict], codigo_repuesto: object) -> dict | None:
+    if not isinstance(codigo_repuesto, str):
+        return None
+    codigo = codigo_repuesto.strip().upper()
     for repuesto in lista_stock:
-        if repuesto["codigo_repuesto"].lower() == codigo_repuesto.strip().lower():
+        if str(repuesto.get("codigo_repuesto", "")).upper() == codigo:
             return repuesto
-
     return None
 
 
-def actualizar_stock(lista_stock, codigo_repuesto, cantidad_movimiento):
-    """Actualiza el stock sumando o restando una cantidad."""
+def actualizar_stock(
+    lista_stock: list[dict],
+    codigo_repuesto: object,
+    cantidad_movimiento: object,
+) -> tuple[bool, str]:
     repuesto = buscar_repuesto_por_codigo(lista_stock, codigo_repuesto)
-
     if repuesto is None:
         return False, "No existe un repuesto registrado con ese código."
-
+    if isinstance(cantidad_movimiento, bool):
+        return False, "La cantidad de movimiento debe ser un número entero."
     try:
-        cantidad_convertida = int(cantidad_movimiento)
-
-    except ValueError:
+        movimiento = int(cantidad_movimiento)
+    except (TypeError, ValueError):
+        return False, "La cantidad de movimiento debe ser un número entero."
+    if isinstance(cantidad_movimiento, float) and not cantidad_movimiento.is_integer():
         return False, "La cantidad de movimiento debe ser un número entero."
 
-    nuevo_stock = repuesto["cantidad"] + cantidad_convertida
-
+    actual = int(repuesto.get("cantidad", 0))
+    nuevo_stock = actual + movimiento
     if nuevo_stock < 0:
         return False, "El stock no puede quedar en negativo."
-
     repuesto["cantidad"] = nuevo_stock
     guardar_stock(lista_stock)
-
     return True, "Stock actualizado correctamente."
 
 
-def listar_repuestos_bajo_stock(lista_stock):
-    """Lista repuestos que están en stock mínimo o por debajo."""
-    repuestos_bajo_stock = []
-
-    for repuesto in lista_stock:
-        if repuesto["cantidad"] <= repuesto["stock_minimo"]:
-            repuestos_bajo_stock.append(repuesto)
-
-    return repuestos_bajo_stock
+def listar_repuestos_bajo_stock(lista_stock: list[dict]) -> list[dict]:
+    return [
+        item
+        for item in lista_stock
+        if int(item.get("cantidad", 0)) <= int(item.get("stock_minimo", 0))
+    ]
 
 
-def calcular_valor_total_stock(lista_stock):
-    """Calcula el valor económico total del inventario."""
-    valor_total = 0
-
-    for repuesto in lista_stock:
-        valor_total += repuesto["cantidad"] * repuesto["precio_unitario"]
-
-    return valor_total
+def calcular_valor_total_stock(lista_stock: list[dict]) -> float:
+    return sum(
+        int(item.get("cantidad", 0)) * float(item.get("precio_unitario", 0))
+        for item in lista_stock
+    )
 
 
-# =====================================================================
-# MENÚ INTERACTIVO AÑADIDO PARA LA INTEGRACIÓN
-# =====================================================================
-def menu_stock():
-    lista_stock = cargar_stock()
-    
+def _mostrar_repuesto(repuesto: dict) -> None:
+    campos = (
+        ("Código", "codigo_repuesto"),
+        ("Nombre", "nombre"),
+        ("Categoría", "categoria"),
+        ("Marca", "marca"),
+        ("Modelo compatible", "modelo_compatible"),
+        ("Cantidad", "cantidad"),
+        ("Stock mínimo", "stock_minimo"),
+        ("Precio unitario", "precio_unitario"),
+        ("Proveedor", "proveedor"),
+    )
+    for etiqueta, campo in campos:
+        print(f"{etiqueta}: {repuesto.get(campo, '')}")
+
+
+def menu_stock() -> None:
     while True:
-        print("\n" + "-"*40)
-        print(" GESTIÓN DE STOCK DE REPUESTOS")
-        print("-" * 40)
-        print("1. Registrar nuevo repuesto")
-        print("2. Mostrar inventario completo")
-        print("3. Actualizar cantidad de stock")
-        print("4. Ver repuestos con stock bajo")
-        print("5. Volver al Menú Principal")
-        
-        opcion = input("\nSeleccione una opción (1-5): ")
-        
-        if opcion == '1':
-            print("\n--- Registro de Repuesto ---")
-            codigo = input("Código de repuesto: ")
-            nombre = input("Nombre de repuesto: ")
-            print(f"Categorías válidas: {', '.join(CATEGORIAS_REPUESTO)}")
-            categoria = input("Categoría: ")
-            marca = input("Marca: ")
-            modelo = input("Modelo compatible: ")
-            cantidad = input("Cantidad inicial: ")
-            minimo = input("Stock mínimo: ")
-            precio = input("Precio unitario: ")
-            proveedor = input("Proveedor: ")
-            
-            exito, msj = registrar_repuesto(
-                lista_stock, codigo, nombre, categoria, marca, 
-                modelo, cantidad, minimo, precio, proveedor
-            )
-            print(f"\n[{'EXITO' if exito else 'ERROR'}] {msj}")
-            
-        elif opcion == '2':
-            inventario = listar_stock(lista_stock)
-            print("\n--- Inventario Actual ---")
-            if not inventario:
-                print("El inventario está vacío.")
+        print("\n--- MENÚ DE STOCK DE REPUESTOS ---")
+        print("1. Registrar repuesto")
+        print("2. Buscar repuesto")
+        print("3. Listar inventario")
+        print("4. Registrar entrada o salida")
+        print("5. Ver repuestos con stock bajo")
+        print("6. Ver valor total del inventario")
+        print("7. Volver")
+        opcion = input("Seleccione una opción: ").strip()
+        try:
+            lista = cargar_stock()
+            if opcion == "1":
+                print("Categorías: " + ", ".join(CATEGORIAS_REPUESTO))
+                exito, mensaje = registrar_repuesto(
+                    lista,
+                    input("Código: ").strip(),
+                    input("Nombre: ").strip(),
+                    input("Categoría: ").strip(),
+                    input("Marca: ").strip(),
+                    input("Modelo compatible: ").strip(),
+                    input("Cantidad inicial: ").strip(),
+                    input("Stock mínimo: ").strip(),
+                    input("Precio unitario: ").strip(),
+                    input("Proveedor: ").strip(),
+                )
+                print(mensaje)
+            elif opcion == "2":
+                repuesto = buscar_repuesto_por_codigo(lista, input("Código: ").strip())
+                if repuesto:
+                    _mostrar_repuesto(repuesto)
+                else:
+                    print("No se encontró el repuesto.")
+            elif opcion == "3":
+                if not lista:
+                    print("No hay repuestos registrados.")
+                for indice, repuesto in enumerate(lista, 1):
+                    print(f"\nRepuesto {indice}")
+                    _mostrar_repuesto(repuesto)
+            elif opcion == "4":
+                print("Use una cantidad positiva para entrada y negativa para salida.")
+                _, mensaje = actualizar_stock(
+                    lista,
+                    input("Código: ").strip(),
+                    input("Cantidad del movimiento: ").strip(),
+                )
+                print(mensaje)
+            elif opcion == "5":
+                bajos = listar_repuestos_bajo_stock(lista)
+                if not bajos:
+                    print("No hay repuestos con stock bajo.")
+                for repuesto in bajos:
+                    print()
+                    _mostrar_repuesto(repuesto)
+            elif opcion == "6":
+                print(f"Valor total del inventario: S/ {calcular_valor_total_stock(lista):,.2f}")
+            elif opcion == "7":
+                break
             else:
-                for rep in inventario:
-                    print(f"[{rep['codigo_repuesto']}] {rep['nombre']} - Cantidad: {rep['cantidad']} - Precio: ${rep['precio_unitario']}")
-                    
-        elif opcion == '3':
-            print("\n--- Actualizar Stock ---")
-            codigo = input("Ingrese el código del repuesto: ")
-            cantidad = input("Cantidad a sumar (positiva) o restar (negativa): ")
-            
-            exito, msj = actualizar_stock(lista_stock, codigo, cantidad)
-            print(f"\n[{'EXITO' if exito else 'ERROR'}] {msj}")
-            
-        elif opcion == '4':
-            bajo_stock = listar_repuestos_bajo_stock(lista_stock)
-            print("\n--- Repuestos en Nivel Crítico ---")
-            if not bajo_stock:
-                print("No hay repuestos por debajo del stock mínimo. Todo en orden.")
-            else:
-                for rep in bajo_stock:
-                    print(f"[{rep['codigo_repuesto']}] {rep['nombre']} - Quedan: {rep['cantidad']} (Mínimo: {rep['stock_minimo']})")
-                    
-        elif opcion == '5':
-            print("\nSaliendo del módulo de Stock...")
-            break
-            
-        else:
-            print("\n[!] Opción inválida. Intente de nuevo.")
+                print("Opción no válida.")
+        except (ValueError, OSError) as error:
+            print(f"Error: {error}")
+
+
+if __name__ == "__main__":
+    menu_stock()

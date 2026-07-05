@@ -1,333 +1,326 @@
-"""Modulo para administrar mantenimientos preventivos de maquinaria."""
+"""Programación y seguimiento del mantenimiento preventivo."""
 
-import json
+from __future__ import annotations
+
+import math
+import unicodedata
 from datetime import datetime
-from pathlib import Path
 
-try:
-    from modulos.equipos import buscar_equipo, actualizar_datos_tecnicos
-except ModuleNotFoundError:
-    from equipos import buscar_equipo, actualizar_datos_tecnicos
+from almacenamiento import cargar_lista, guardar_lista
+from equipos import actualizar_datos_tecnicos, buscar_equipo
 
-
+ARCHIVO_PREVENTIVOS = "mantenimientos.json"
 ESTADO_PROGRAMADO = "Programado"
 ESTADO_EN_PROCESO = "En proceso"
 ESTADO_COMPLETADO = "Completado"
-ESTADOS_PERMITIDOS = (ESTADO_PROGRAMADO, ESTADO_EN_PROCESO, ESTADO_COMPLETADO)
-
-RUTA_BASE = Path(__file__).resolve().parent.parent
-RUTA_DATOS = RUTA_BASE / "datos"
-RUTA_ARCHIVO = RUTA_DATOS / "mantenimientos.json"
-
-
-def _crear_archivo_si_no_existe():
-    """Crea el archivo JSON de mantenimientos si todavia no existe."""
-    RUTA_DATOS.mkdir(parents=True, exist_ok=True)
-
-    if not RUTA_ARCHIVO.exists():
-        RUTA_ARCHIVO.write_text("[]", encoding="utf-8")
+ESTADO_CANCELADO = "Cancelado"
+ESTADOS_PERMITIDOS = (
+    ESTADO_PROGRAMADO,
+    ESTADO_EN_PROCESO,
+    ESTADO_COMPLETADO,
+    ESTADO_CANCELADO,
+)
 
 
-def _cargar_mantenimientos():
-    """Carga los mantenimientos guardados y valida la estructura del JSON."""
-    _crear_archivo_si_no_existe()
-
-    try:
-        contenido = RUTA_ARCHIVO.read_text(encoding="utf-8").strip()
-        if not contenido:
-            return []
-
-        mantenimientos = json.loads(contenido)
-        if not isinstance(mantenimientos, list):
-            raise ValueError("El archivo de mantenimientos debe contener una lista.")
-
-        return mantenimientos
-    except json.JSONDecodeError as error:
-        raise ValueError("No se pudo leer mantenimientos.json: el JSON no es valido.") from error
-    except OSError as error:
-        raise ValueError("No se pudo leer el archivo de mantenimientos.") from error
+def _normalizar_comparacion(valor: object) -> str:
+    texto = unicodedata.normalize("NFKD", str(valor).strip().lower())
+    return "".join(letra for letra in texto if not unicodedata.combining(letra))
 
 
-def _guardar_mantenimientos(mantenimientos):
-    """Guarda la lista de mantenimientos con codificacion UTF-8."""
-    _crear_archivo_si_no_existe()
-
-    try:
-        texto_json = json.dumps(mantenimientos, ensure_ascii=False, indent=4)
-        RUTA_ARCHIVO.write_text(texto_json, encoding="utf-8")
-    except OSError as error:
-        raise ValueError("No se pudo guardar el archivo de mantenimientos.") from error
+def _cargar_mantenimientos() -> list[dict]:
+    return cargar_lista(ARCHIVO_PREVENTIVOS)
 
 
-def _validar_texto_obligatorio(valor, nombre_campo):
-    """Valida que un campo obligatorio tenga contenido."""
+def _guardar_mantenimientos(mantenimientos: list[dict]) -> None:
+    guardar_lista(ARCHIVO_PREVENTIVOS, mantenimientos)
+
+
+def _validar_texto_obligatorio(valor: object, nombre_campo: str) -> str:
     if valor is None or str(valor).strip() == "":
         raise ValueError(f"El campo {nombre_campo} es obligatorio.")
-
     return str(valor).strip()
 
 
-def _normalizar_codigo(codigo, nombre_campo):
-    """Valida y convierte un codigo a mayusculas."""
+def _normalizar_codigo(codigo: object, nombre_campo: str) -> str:
     return _validar_texto_obligatorio(codigo, nombre_campo).upper()
 
 
-def _validar_fecha(fecha):
-    """Valida una fecha en formato AAAA-MM-DD."""
-    fecha_validada = _validar_texto_obligatorio(fecha, "fecha")
-
+def _validar_fecha(fecha: object) -> str:
+    texto = _validar_texto_obligatorio(fecha, "fecha")
     try:
-        fecha_convertida = datetime.strptime(fecha_validada, "%Y-%m-%d")
+        convertida = datetime.strptime(texto, "%Y-%m-%d")
     except ValueError as error:
         raise ValueError("La fecha debe tener formato AAAA-MM-DD.") from error
-
-    if fecha_validada != fecha_convertida.strftime("%Y-%m-%d"):
+    if texto != convertida.strftime("%Y-%m-%d"):
         raise ValueError("La fecha debe tener formato AAAA-MM-DD.")
-
-    return fecha_validada
-
-
-def _validar_estado(estado):
-    """Valida que el estado pertenezca a los estados permitidos."""
-    estado_validado = _validar_texto_obligatorio(estado, "estado")
-
-    for estado_permitido in ESTADOS_PERMITIDOS:
-        if estado_validado.lower() == estado_permitido.lower():
-            return estado_permitido
-
-    raise ValueError("El estado debe ser Programado, En proceso o Completado.")
+    return texto
 
 
-def _generar_codigo_mantenimiento(mantenimientos):
-    """Genera un codigo correlativo unico para mantenimiento preventivo."""
-    numero_mayor = 0
+def _validar_costo(costo: object) -> float:
+    if costo in (None, ""):
+        return 0.0
+    if isinstance(costo, bool):
+        raise ValueError("El costo debe ser numérico.")
+    try:
+        numero = float(costo)
+    except (TypeError, ValueError) as error:
+        raise ValueError("El costo debe ser numérico.") from error
+    if not math.isfinite(numero) or numero < 0:
+        raise ValueError("El costo debe ser un número finito mayor o igual que cero.")
+    return numero
 
+
+def _validar_estado(estado: object) -> str:
+    normalizado = _normalizar_comparacion(_validar_texto_obligatorio(estado, "estado"))
+    equivalencias = {
+        "programado": ESTADO_PROGRAMADO,
+        "en proceso": ESTADO_EN_PROCESO,
+        "completado": ESTADO_COMPLETADO,
+        "finalizado": ESTADO_COMPLETADO,
+        "cancelado": ESTADO_CANCELADO,
+    }
+    if normalizado not in equivalencias:
+        raise ValueError("El estado debe ser Programado, En proceso, Completado o Cancelado.")
+    return equivalencias[normalizado]
+
+
+def _generar_codigo_mantenimiento(mantenimientos: list[dict]) -> str:
+    mayor = 0
     for mantenimiento in mantenimientos:
         codigo = str(mantenimiento.get("codigo_mantenimiento", "")).upper()
         if codigo.startswith("MP-") and codigo[3:].isdigit():
-            numero_mayor = max(numero_mayor, int(codigo[3:]))
-
-    return f"MP-{numero_mayor + 1:04d}"
+            mayor = max(mayor, int(codigo[3:]))
+    return f"MP-{mayor + 1:04d}"
 
 
 def programar_mantenimiento(
-    codigo_equipo,
-    fecha_programada,
-    tipo_servicio,
-    descripcion,
-    responsable=""
-):
-    """Programa un mantenimiento preventivo para un equipo existente."""
-    codigo_equipo_validado = _normalizar_codigo(codigo_equipo, "codigo_equipo")
-
+    codigo_equipo: object,
+    fecha_programada: object,
+    tipo_servicio: object,
+    descripcion: object,
+    responsable: object = "",
+    costo: object = 0,
+) -> dict:
+    """Programa un mantenimiento para un equipo existente."""
+    codigo_equipo_validado = _normalizar_codigo(codigo_equipo, "código de equipo")
     if buscar_equipo(codigo_equipo_validado) is None:
-        raise ValueError(f"No existe un equipo con el codigo {codigo_equipo_validado}.")
+        raise ValueError(f"No existe un equipo con el código {codigo_equipo_validado}.")
 
     mantenimientos = _cargar_mantenimientos()
     mantenimiento = {
         "codigo_mantenimiento": _generar_codigo_mantenimiento(mantenimientos),
         "codigo_equipo": codigo_equipo_validado,
         "fecha_programada": _validar_fecha(fecha_programada),
-        "tipo_servicio": _validar_texto_obligatorio(tipo_servicio, "tipo_servicio"),
-        "descripcion": _validar_texto_obligatorio(descripcion, "descripcion"),
+        "tipo_servicio": _validar_texto_obligatorio(tipo_servicio, "tipo de servicio"),
+        "descripcion": _validar_texto_obligatorio(descripcion, "descripción"),
         "responsable": "" if responsable is None else str(responsable).strip(),
         "estado": ESTADO_PROGRAMADO,
         "fecha_realizada": None,
         "observaciones": "",
+        "costo": _validar_costo(costo),
     }
-
     mantenimientos.append(mantenimiento)
     _guardar_mantenimientos(mantenimientos)
     return mantenimiento
 
 
-def buscar_mantenimiento(codigo_mantenimiento):
-    """Busca un mantenimiento por codigo sin distinguir mayusculas."""
-    codigo_validado = _normalizar_codigo(codigo_mantenimiento, "codigo_mantenimiento")
-    mantenimientos = _cargar_mantenimientos()
-
-    for mantenimiento in mantenimientos:
-        codigo_actual = str(mantenimiento.get("codigo_mantenimiento", "")).upper()
-        if codigo_actual == codigo_validado:
+def buscar_mantenimiento(codigo_mantenimiento: object) -> dict | None:
+    codigo = _normalizar_codigo(codigo_mantenimiento, "código de mantenimiento")
+    for mantenimiento in _cargar_mantenimientos():
+        if str(mantenimiento.get("codigo_mantenimiento", "")).upper() == codigo:
             return mantenimiento
-
     return None
 
 
-def listar_mantenimientos(codigo_equipo=None, estado=None):
-    """Lista mantenimientos con filtros opcionales por equipo y estado."""
-    mantenimientos = _cargar_mantenimientos()
-    codigo_equipo_validado = None
-    estado_validado = None
-
-    if codigo_equipo is not None:
-        codigo_equipo_validado = _normalizar_codigo(codigo_equipo, "codigo_equipo")
-    if estado is not None:
-        estado_validado = _validar_estado(estado)
-
+def listar_mantenimientos(codigo_equipo: object = None, estado: object = None) -> list[dict]:
+    codigo = None if codigo_equipo is None else _normalizar_codigo(codigo_equipo, "código de equipo")
+    estado_validado = None if estado is None else _validar_estado(estado)
     resultado = []
-    for mantenimiento in mantenimientos:
-        if codigo_equipo_validado is not None:
-            codigo_actual = str(mantenimiento.get("codigo_equipo", "")).upper()
-            if codigo_actual != codigo_equipo_validado:
-                continue
-
+    for mantenimiento in _cargar_mantenimientos():
+        if codigo is not None and str(mantenimiento.get("codigo_equipo", "")).upper() != codigo:
+            continue
         if estado_validado is not None and mantenimiento.get("estado") != estado_validado:
             continue
-
         resultado.append(mantenimiento)
-
     return resultado
 
 
-def iniciar_mantenimiento(codigo_mantenimiento):
-    """Inicia un mantenimiento programado y cambia el estado del equipo."""
-    codigo_validado = _normalizar_codigo(codigo_mantenimiento, "codigo_mantenimiento")
+def _hay_correctivo_abierto(codigo_equipo: str) -> bool:
+    estados_cerrados = {"Resuelto", "Cancelado"}
+    for correctivo in cargar_lista("correctivos.json"):
+        if str(correctivo.get("codigo_equipo", "")).upper() == codigo_equipo.upper():
+            if correctivo.get("estado") not in estados_cerrados:
+                return True
+    return False
+
+
+def _sincronizar_estado_equipo(codigo_equipo: str) -> None:
     mantenimientos = _cargar_mantenimientos()
+    en_proceso = any(
+        str(item.get("codigo_equipo", "")).upper() == codigo_equipo.upper()
+        and item.get("estado") == ESTADO_EN_PROCESO
+        for item in mantenimientos
+    )
+    if _hay_correctivo_abierto(codigo_equipo):
+        estado = "Fuera de servicio"
+    elif en_proceso:
+        estado = "En mantenimiento"
+    else:
+        estado = "Operativo"
+    actualizar_datos_tecnicos(codigo_equipo, estado=estado)
 
+
+def iniciar_mantenimiento(codigo_mantenimiento: object) -> dict:
+    codigo = _normalizar_codigo(codigo_mantenimiento, "código de mantenimiento")
+    mantenimientos = _cargar_mantenimientos()
     for mantenimiento in mantenimientos:
-        codigo_actual = str(mantenimiento.get("codigo_mantenimiento", "")).upper()
-        if codigo_actual == codigo_validado:
-            if mantenimiento.get("estado") != ESTADO_PROGRAMADO:
-                raise ValueError("Solo se pueden iniciar mantenimientos con estado Programado.")
-
-            mantenimiento["estado"] = ESTADO_EN_PROCESO
-            actualizar_datos_tecnicos(
-                codigo=mantenimiento["codigo_equipo"],
-                estado="En mantenimiento preventivo"
-            )
-            _guardar_mantenimientos(mantenimientos)
-            return mantenimiento
-
-    raise ValueError(f"No existe un mantenimiento con el codigo {codigo_validado}.")
+        if str(mantenimiento.get("codigo_mantenimiento", "")).upper() != codigo:
+            continue
+        if mantenimiento.get("estado") != ESTADO_PROGRAMADO:
+            raise ValueError("Solo se pueden iniciar mantenimientos con estado Programado.")
+        equipo = mantenimiento.get("codigo_equipo", "")
+        otro_activo = any(
+            item is not mantenimiento
+            and str(item.get("codigo_equipo", "")).upper() == str(equipo).upper()
+            and item.get("estado") == ESTADO_EN_PROCESO
+            for item in mantenimientos
+        )
+        if otro_activo:
+            raise ValueError("El equipo ya tiene otro mantenimiento preventivo en proceso.")
+        mantenimiento["estado"] = ESTADO_EN_PROCESO
+        _guardar_mantenimientos(mantenimientos)
+        _sincronizar_estado_equipo(str(equipo))
+        return mantenimiento
+    raise ValueError(f"No existe un mantenimiento con el código {codigo}.")
 
 
 def finalizar_mantenimiento(
-    codigo_mantenimiento,
-    fecha_realizada=None,
-    observaciones=""
-):
-    """Finaliza un mantenimiento en proceso y deja el equipo operativo."""
-    codigo_validado = _normalizar_codigo(codigo_mantenimiento, "codigo_mantenimiento")
+    codigo_mantenimiento: object,
+    fecha_realizada: object = None,
+    observaciones: object = "",
+    costo: object = None,
+) -> dict:
+    codigo = _normalizar_codigo(codigo_mantenimiento, "código de mantenimiento")
     mantenimientos = _cargar_mantenimientos()
-
     for mantenimiento in mantenimientos:
-        codigo_actual = str(mantenimiento.get("codigo_mantenimiento", "")).upper()
-        if codigo_actual == codigo_validado:
-            if mantenimiento.get("estado") != ESTADO_EN_PROCESO:
-                raise ValueError("Solo se pueden finalizar mantenimientos con estado En proceso.")
+        if str(mantenimiento.get("codigo_mantenimiento", "")).upper() != codigo:
+            continue
+        if mantenimiento.get("estado") != ESTADO_EN_PROCESO:
+            raise ValueError("Solo se pueden finalizar mantenimientos con estado En proceso.")
 
-            fecha_final = (
-                datetime.now().strftime("%Y-%m-%d")
-                if fecha_realizada is None
-                else _validar_fecha(fecha_realizada)
-            )
+        fecha_final = datetime.now().strftime("%Y-%m-%d") if fecha_realizada in (None, "") else _validar_fecha(fecha_realizada)
+        fecha_programada = _validar_fecha(mantenimiento.get("fecha_programada"))
+        if fecha_final < fecha_programada:
+            raise ValueError("La fecha realizada no puede ser anterior a la fecha programada.")
 
-            mantenimiento["estado"] = ESTADO_COMPLETADO
-            mantenimiento["fecha_realizada"] = fecha_final
-            mantenimiento["observaciones"] = "" if observaciones is None else str(observaciones).strip()
-            actualizar_datos_tecnicos(
-                codigo=mantenimiento["codigo_equipo"],
-                estado="Operativo"
-            )
-            _guardar_mantenimientos(mantenimientos)
-            return mantenimiento
-
-    raise ValueError(f"No existe un mantenimiento con el codigo {codigo_validado}.")
-
-
-def _pedir_campo(mensaje):
-    """Solicita un dato por consola y elimina espacios sobrantes."""
-    return input(mensaje).strip()
+        mantenimiento["estado"] = ESTADO_COMPLETADO
+        mantenimiento["fecha_realizada"] = fecha_final
+        mantenimiento["observaciones"] = "" if observaciones is None else str(observaciones).strip()
+        if costo is not None:
+            mantenimiento["costo"] = _validar_costo(costo)
+        else:
+            mantenimiento["costo"] = _validar_costo(mantenimiento.get("costo", 0))
+        _guardar_mantenimientos(mantenimientos)
+        _sincronizar_estado_equipo(str(mantenimiento.get("codigo_equipo", "")))
+        return mantenimiento
+    raise ValueError(f"No existe un mantenimiento con el código {codigo}.")
 
 
-def _mostrar_mantenimiento(mantenimiento):
-    """Muestra los datos de un mantenimiento en consola."""
-    print(f"Codigo de mantenimiento: {mantenimiento['codigo_mantenimiento']}")
-    print(f"Codigo de equipo: {mantenimiento['codigo_equipo']}")
-    print(f"Fecha programada: {mantenimiento['fecha_programada']}")
-    print(f"Tipo de servicio: {mantenimiento['tipo_servicio']}")
-    print(f"Descripcion: {mantenimiento['descripcion']}")
-    print(f"Responsable: {mantenimiento['responsable']}")
-    print(f"Estado: {mantenimiento['estado']}")
-    print(f"Fecha realizada: {mantenimiento['fecha_realizada']}")
-    print(f"Observaciones: {mantenimiento['observaciones']}")
+def cancelar_mantenimiento(codigo_mantenimiento: object, motivo: object = "") -> dict:
+    codigo = _normalizar_codigo(codigo_mantenimiento, "código de mantenimiento")
+    mantenimientos = _cargar_mantenimientos()
+    for mantenimiento in mantenimientos:
+        if str(mantenimiento.get("codigo_mantenimiento", "")).upper() != codigo:
+            continue
+        if mantenimiento.get("estado") in {ESTADO_COMPLETADO, ESTADO_CANCELADO}:
+            raise ValueError("No se puede cancelar un mantenimiento completado o ya cancelado.")
+        mantenimiento["estado"] = ESTADO_CANCELADO
+        mantenimiento["observaciones"] = "" if motivo is None else str(motivo).strip()
+        _guardar_mantenimientos(mantenimientos)
+        _sincronizar_estado_equipo(str(mantenimiento.get("codigo_equipo", "")))
+        return mantenimiento
+    raise ValueError(f"No existe un mantenimiento con el código {codigo}.")
 
 
-def menu_preventivo():
-    """Menu de prueba para administrar mantenimientos preventivos."""
+def _mostrar_mantenimiento(mantenimiento: dict) -> None:
+    etiquetas = (
+        ("Código de mantenimiento", "codigo_mantenimiento"),
+        ("Código de equipo", "codigo_equipo"),
+        ("Fecha programada", "fecha_programada"),
+        ("Tipo de servicio", "tipo_servicio"),
+        ("Descripción", "descripcion"),
+        ("Responsable", "responsable"),
+        ("Estado", "estado"),
+        ("Fecha realizada", "fecha_realizada"),
+        ("Observaciones", "observaciones"),
+        ("Costo", "costo"),
+    )
+    for etiqueta, campo in etiquetas:
+        print(f"{etiqueta}: {mantenimiento.get(campo, '')}")
+
+
+def menu_preventivo() -> None:
     while True:
-        print("\n--- Menu de mantenimiento preventivo ---")
-        print("1. Programar mantenimiento preventivo")
+        print("\n--- MENÚ DE MANTENIMIENTO PREVENTIVO ---")
+        print("1. Programar mantenimiento")
         print("2. Buscar mantenimiento")
         print("3. Listar mantenimientos")
         print("4. Iniciar mantenimiento")
         print("5. Finalizar mantenimiento")
-        print("6. Salir o volver")
-
-        opcion = _pedir_campo("Seleccione una opcion: ")
-
+        print("6. Cancelar mantenimiento")
+        print("7. Volver")
+        opcion = input("Seleccione una opción: ").strip()
         try:
             if opcion == "1":
                 mantenimiento = programar_mantenimiento(
-                    codigo_equipo=_pedir_campo("Codigo del equipo: "),
-                    fecha_programada=_pedir_campo("Fecha programada (AAAA-MM-DD): "),
-                    tipo_servicio=_pedir_campo("Tipo de servicio: "),
-                    descripcion=_pedir_campo("Descripcion: "),
-                    responsable=_pedir_campo("Responsable [opcional]: "),
+                    input("Código del equipo: ").strip(),
+                    input("Fecha programada (AAAA-MM-DD): ").strip(),
+                    input("Tipo de servicio: ").strip(),
+                    input("Descripción: ").strip(),
+                    input("Responsable [opcional]: ").strip(),
+                    input("Costo estimado [0]: ").strip() or 0,
                 )
-                print("\nMantenimiento programado correctamente:")
+                print("\nMantenimiento programado correctamente.")
                 _mostrar_mantenimiento(mantenimiento)
-
             elif opcion == "2":
-                mantenimiento = buscar_mantenimiento(
-                    _pedir_campo("Codigo del mantenimiento: ")
-                )
-                if mantenimiento is None:
-                    print("No se encontro un mantenimiento con ese codigo.")
-                else:
+                mantenimiento = buscar_mantenimiento(input("Código del mantenimiento: ").strip())
+                if mantenimiento:
                     _mostrar_mantenimiento(mantenimiento)
-
-            elif opcion == "3":
-                codigo_equipo = _pedir_campo("Codigo de equipo [Enter para todos]: ")
-                estado = _pedir_campo("Estado [Enter para todos]: ")
-                mantenimientos = listar_mantenimientos(
-                    codigo_equipo=codigo_equipo if codigo_equipo else None,
-                    estado=estado if estado else None,
-                )
-
-                if not mantenimientos:
-                    print("No hay mantenimientos para mostrar.")
                 else:
-                    for indice, mantenimiento in enumerate(mantenimientos, start=1):
-                        print(f"\nMantenimiento {indice}")
-                        _mostrar_mantenimiento(mantenimiento)
-
+                    print("No se encontró el mantenimiento.")
+            elif opcion == "3":
+                equipo = input("Código de equipo [Enter para todos]: ").strip()
+                estado = input("Estado [Enter para todos]: ").strip()
+                lista = listar_mantenimientos(equipo or None, estado or None)
+                if not lista:
+                    print("No hay mantenimientos para mostrar.")
+                for indice, mantenimiento in enumerate(lista, 1):
+                    print(f"\nMantenimiento {indice}")
+                    _mostrar_mantenimiento(mantenimiento)
             elif opcion == "4":
-                mantenimiento = iniciar_mantenimiento(
-                    _pedir_campo("Codigo del mantenimiento: ")
-                )
-                print("\nMantenimiento iniciado correctamente:")
+                mantenimiento = iniciar_mantenimiento(input("Código del mantenimiento: ").strip())
+                print("Mantenimiento iniciado correctamente.")
                 _mostrar_mantenimiento(mantenimiento)
-
             elif opcion == "5":
-                fecha = _pedir_campo("Fecha realizada (AAAA-MM-DD) [Enter para hoy]: ")
-                mantenimiento = finalizar_mantenimiento(
-                    codigo_mantenimiento=_pedir_campo("Codigo del mantenimiento: "),
-                    fecha_realizada=fecha if fecha else None,
-                    observaciones=_pedir_campo("Observaciones [opcional]: "),
-                )
-                print("\nMantenimiento finalizado correctamente:")
+                codigo = input("Código del mantenimiento: ").strip()
+                fecha = input("Fecha realizada (AAAA-MM-DD) [hoy]: ").strip()
+                observaciones = input("Observaciones [opcional]: ").strip()
+                costo = input("Costo final [mantener]: ").strip()
+                mantenimiento = finalizar_mantenimiento(codigo, fecha or None, observaciones, costo if costo else None)
+                print("Mantenimiento finalizado correctamente.")
                 _mostrar_mantenimiento(mantenimiento)
-
             elif opcion == "6":
-                print("Volviendo al menu anterior.")
+                mantenimiento = cancelar_mantenimiento(
+                    input("Código del mantenimiento: ").strip(),
+                    input("Motivo [opcional]: ").strip(),
+                )
+                print("Mantenimiento cancelado correctamente.")
+                _mostrar_mantenimiento(mantenimiento)
+            elif opcion == "7":
                 break
-
             else:
-                print("Opcion no valida.")
-
-        except ValueError as error:
+                print("Opción no válida.")
+        except (ValueError, OSError) as error:
             print(f"Error: {error}")
 
 

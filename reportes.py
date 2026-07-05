@@ -1,254 +1,230 @@
-import json
-from pathlib import Path
+"""Indicadores y reportes operativos del sistema de maquinaria."""
+
+from __future__ import annotations
+
+from almacenamiento import cargar_lista
 
 
-BASE_DIR = Path(__file__).resolve().parent
+def cargar_json(nombre_archivo: str) -> list[dict]:
+    return cargar_lista(nombre_archivo)
 
 
-def cargar_json(nombre_archivo):
-    ruta_archivo = BASE_DIR / nombre_archivo
-
-    try:
-        with ruta_archivo.open("r", encoding="utf-8") as archivo:
-            return json.load(archivo)
-    except (FileNotFoundError, json.JSONDecodeError):
-        return []
-
-
-def cargar_maquinaria():
+def cargar_maquinaria() -> list[dict]:
     return cargar_json("maquinaria.json")
 
 
-def cargar_mantenimientos():
+def cargar_mantenimientos() -> list[dict]:
     return cargar_json("mantenimientos.json")
 
 
-def cargar_correctivos():
+def cargar_correctivos() -> list[dict]:
     return cargar_json("correctivos.json")
 
 
-def cargar_stock():
+def cargar_stock() -> list[dict]:
     return cargar_json("stock.json")
 
 
-def contar_por_estado(lista_datos, estados):
+def contar_por_estado(lista_datos: list[dict], estados: tuple[str, ...] | list[str]) -> dict[str, int]:
     conteos = {estado: 0 for estado in estados}
-
     for dato in lista_datos:
         estado = dato.get("estado")
         if estado in conteos:
             conteos[estado] += 1
-
     return conteos
 
 
-def contar_por_campo(lista_datos, campo):
-    conteos = {}
-
+def contar_por_campo(lista_datos: list[dict], campo: str) -> dict[str, int]:
+    conteos: dict[str, int] = {}
     for dato in lista_datos:
         valor = dato.get(campo)
-        if valor:
-            conteos[valor] = conteos.get(valor, 0) + 1
-
+        if valor not in (None, ""):
+            texto = str(valor)
+            conteos[texto] = conteos.get(texto, 0) + 1
     return conteos
 
 
-def obtener_numero(diccionario, claves):
+def obtener_numero(diccionario: dict, claves: list[str] | tuple[str, ...]) -> float:
     for clave in claves:
         valor = diccionario.get(clave)
-        if isinstance(valor, (int, float)):
-            return valor
-
         try:
             return float(valor)
         except (TypeError, ValueError):
             continue
-
-    return 0
+    return 0.0
 
 
 def generar_reporte_general(
-    lista_equipos,
-    lista_preventivos,
-    lista_correctivos,
-    lista_stock,
-):
-    estados_equipos = ["Operativo", "En mantenimiento", "Fuera de servicio"]
-    reporte = {
+    lista_equipos: list[dict],
+    lista_preventivos: list[dict],
+    lista_correctivos: list[dict],
+    lista_stock: list[dict],
+) -> dict:
+    estados_equipos = ("Operativo", "En mantenimiento", "Fuera de servicio")
+    estados_preventivos = ("Programado", "En proceso", "Completado", "Cancelado")
+    estados_correctivos = ("Reportado", "En revisión", "En reparación", "Resuelto", "Cancelado")
+
+    costo_preventivos = sum(
+        obtener_numero(item, ("costo", "costo_total", "valor", "monto"))
+        for item in lista_preventivos
+    )
+    valor_stock = 0.0
+    repuestos_bajo_stock = 0
+    for repuesto in lista_stock:
+        cantidad = obtener_numero(repuesto, ("cantidad", "stock", "existencias"))
+        minimo = obtener_numero(repuesto, ("stock_minimo", "minimo"))
+        precio = obtener_numero(
+            repuesto,
+            ("precio_unitario", "valor_unitario", "costo_unitario", "precio"),
+        )
+        valor_stock += cantidad * precio
+        if cantidad <= minimo:
+            repuestos_bajo_stock += 1
+
+    correctivos_criticos_abiertos = sum(
+        1
+        for item in lista_correctivos
+        if item.get("prioridad") in {"Crítica", "Critica"}
+        and item.get("estado") not in {"Resuelto", "Cancelado"}
+    )
+
+    return {
         "total_equipos": len(lista_equipos),
         "equipos_por_estado": contar_por_estado(lista_equipos, estados_equipos),
-        "preventivos_por_estado": contar_por_campo(lista_preventivos, "estado"),
-        "costo_total_preventivos": 0,
-        "correctivos_por_estado": contar_por_campo(lista_correctivos, "estado"),
-        "correctivos_prioridad_critica": 0,
+        "total_preventivos": len(lista_preventivos),
+        "preventivos_por_estado": contar_por_estado(lista_preventivos, estados_preventivos),
+        "costo_total_preventivos": costo_preventivos,
+        "total_correctivos": len(lista_correctivos),
+        "correctivos_por_estado": contar_por_estado(lista_correctivos, estados_correctivos),
+        "correctivos_prioridad_critica": correctivos_criticos_abiertos,
         "total_repuestos": len(lista_stock),
-        "valor_total_stock": 0,
+        "repuestos_bajo_stock": repuestos_bajo_stock,
+        "valor_total_stock": valor_stock,
     }
 
-    for preventivo in lista_preventivos:
-        reporte["costo_total_preventivos"] += obtener_numero(
-            preventivo,
-            ["costo", "costo_total", "valor", "monto"],
-        )
 
-    for correctivo in lista_correctivos:
-        if correctivo.get("prioridad") in ("Cr\u00edtica", "Critica"):
-            reporte["correctivos_prioridad_critica"] += 1
+def mostrar_reporte_en_pantalla(reporte: dict) -> None:
+    print("\n" + "=" * 64)
+    print(f"{'REPORTE GENERAL DE MAQUINARIA':^64}")
+    print("=" * 64)
 
-    for repuesto in lista_stock:
-        cantidad = obtener_numero(repuesto, ["cantidad", "stock", "existencias"])
-        valor_unitario = obtener_numero(
-            repuesto,
-            ["valor_unitario", "precio_unitario", "costo_unitario", "precio"],
-        )
-        reporte["valor_total_stock"] += cantidad * valor_unitario
-
-    return reporte
-
-
-def mostrar_reporte_en_pantalla(reporte_dict):
-    equipos_por_estado = reporte_dict.get("equipos_por_estado", {})
-    preventivos_por_estado = reporte_dict.get("preventivos_por_estado", {})
-    correctivos_por_estado = reporte_dict.get("correctivos_por_estado", {})
-
-    print("\n" + "=" * 60)
-    print(f"{'REPORTE GENERAL DE MAQUINARIA':^60}")
-    print("=" * 60)
-
-    print("\n1. RESUMEN DE EQUIPOS")
-    print("-" * 60)
-    print(f"{'Total de equipos':<40}{reporte_dict.get('total_equipos', 0):>20}")
-    for estado, total in equipos_por_estado.items():
-        print(f"{estado:<40}{total:>20}")
+    print("\n1. EQUIPOS")
+    print("-" * 64)
+    print(f"{'Total de equipos':<44}{reporte.get('total_equipos', 0):>20}")
+    for estado, total in reporte.get("equipos_por_estado", {}).items():
+        print(f"{estado:<44}{total:>20}")
 
     print("\n2. MANTENIMIENTOS PREVENTIVOS")
-    print("-" * 60)
-    for estado, total in preventivos_por_estado.items():
-        print(f"{estado:<40}{total:>20}")
+    print("-" * 64)
+    print(f"{'Total de preventivos':<44}{reporte.get('total_preventivos', 0):>20}")
+    for estado, total in reporte.get("preventivos_por_estado", {}).items():
+        print(f"{estado:<44}{total:>20}")
+    print(f"{'Costo total':<44}S/ {reporte.get('costo_total_preventivos', 0):>16,.2f}")
+
+    print("\n3. MANTENIMIENTOS CORRECTIVOS")
+    print("-" * 64)
+    print(f"{'Total de correctivos':<44}{reporte.get('total_correctivos', 0):>20}")
+    for estado, total in reporte.get("correctivos_por_estado", {}).items():
+        print(f"{estado:<44}{total:>20}")
     print(
-        f"{'Costo total de preventivos':<40}"
-        f"{reporte_dict.get('costo_total_preventivos', 0):>20,.2f}"
+        f"{'Correctivos críticos abiertos':<44}"
+        f"{reporte.get('correctivos_prioridad_critica', 0):>20}"
     )
 
-    print("\n3. FALLAS CORRECTIVAS")
-    print("-" * 60)
-    for estado, total in correctivos_por_estado.items():
-        print(f"{estado:<40}{total:>20}")
-    print(
-        f"{'Tickets con prioridad critica':<40}"
-        f"{reporte_dict.get('correctivos_prioridad_critica', 0):>20}"
-    )
-
-    print("\n4. INVENTARIO DE STOCK")
-    print("-" * 60)
-    print(f"{'Total de repuestos':<40}{reporte_dict.get('total_repuestos', 0):>20}")
-    print(
-        f"{'Valor economico total del stock':<40}"
-        f"{reporte_dict.get('valor_total_stock', 0):>20,.2f}"
-    )
-
-    print("=" * 60 + "\n")
+    print("\n4. INVENTARIO")
+    print("-" * 64)
+    print(f"{'Tipos de repuesto':<44}{reporte.get('total_repuestos', 0):>20}")
+    print(f"{'Repuestos con stock bajo':<44}{reporte.get('repuestos_bajo_stock', 0):>20}")
+    print(f"{'Valor total del stock':<44}S/ {reporte.get('valor_total_stock', 0):>16,.2f}")
+    print("=" * 64 + "\n")
 
 
-def generar_reporte_critico(lista_correctivos):
-    correctivos_criticos = [
-        correctivo
-        for correctivo in lista_correctivos
-        if correctivo.get("estado") == "Pendiente"
-        and correctivo.get("prioridad") in ("Cr\u00edtica", "Critica")
+def generar_reporte_critico(lista_correctivos: list[dict]) -> list[dict]:
+    criticos = [
+        item
+        for item in lista_correctivos
+        if item.get("prioridad") in {"Crítica", "Critica"}
+        and item.get("estado") not in {"Resuelto", "Cancelado"}
     ]
+    print("\n" + "!" * 72)
+    print(f"{'ALERTA: CORRECTIVOS CRÍTICOS ABIERTOS':^72}")
+    print("!" * 72)
+    if not criticos:
+        print("No hay correctivos críticos abiertos.")
+        print("!" * 72 + "\n")
+        return criticos
 
-    print("\n" + "!" * 60)
-    print(f"{'ALERTA: CORRECTIVOS CRITICOS PENDIENTES':^60}")
-    print("!" * 60)
-
-    if not correctivos_criticos:
-        print("No hay correctivos criticos pendientes.")
-        print("!" * 60 + "\n")
-        return
-
-    print(f"{'Codigo':<15}{'Equipo':<25}{'Descripcion':<20}")
-    print("-" * 60)
-
-    for correctivo in correctivos_criticos:
-        codigo = correctivo.get("codigo", correctivo.get("id", "N/A"))
-        equipo = correctivo.get("equipo", correctivo.get("maquinaria", "N/A"))
-        descripcion = correctivo.get(
-            "descripcion",
-            correctivo.get("falla", "Sin descripcion"),
+    print(f"{'Código':<14}{'Equipo':<14}{'Estado':<18}{'Descripción':<26}")
+    print("-" * 72)
+    for item in criticos:
+        print(
+            f"{str(item.get('codigo_correctivo', 'N/A')):<14}"
+            f"{str(item.get('codigo_equipo', 'N/A')):<14}"
+            f"{str(item.get('estado', 'N/A')):<18}"
+            f"{str(item.get('descripcion', 'Sin descripción'))[:25]:<26}"
         )
-        print(f"{str(codigo):<15}{str(equipo):<25}{str(descripcion):<20}")
+    print("!" * 72 + "\n")
+    return criticos
 
-    print("!" * 60 + "\n")
 
-
-def generar_alerta_stock(lista_stock):
-    repuestos_bajo_stock = []
-
+def generar_alerta_stock(lista_stock: list[dict]) -> list[dict]:
+    bajos = []
     for repuesto in lista_stock:
-        cantidad = obtener_numero(repuesto, ["cantidad", "stock", "existencias"])
-        stock_minimo = obtener_numero(repuesto, ["stock_minimo", "minimo"])
+        cantidad = obtener_numero(repuesto, ("cantidad", "stock", "existencias"))
+        minimo = obtener_numero(repuesto, ("stock_minimo", "minimo"))
+        if cantidad <= minimo:
+            bajos.append(repuesto)
 
-        if cantidad <= stock_minimo:
-            repuestos_bajo_stock.append((repuesto, cantidad, stock_minimo))
+    print("\n" + "!" * 64)
+    print(f"{'ALERTA: REPUESTOS EN STOCK MÍNIMO':^64}")
+    print("!" * 64)
+    if not bajos:
+        print("No hay repuestos en stock mínimo.")
+        print("!" * 64 + "\n")
+        return bajos
 
-    print("\n" + "!" * 60)
-    print(f"{'ALERTA: REPUESTOS EN STOCK MINIMO':^60}")
-    print("!" * 60)
-
-    if not repuestos_bajo_stock:
-        print("No hay repuestos por debajo del stock minimo.")
-        print("!" * 60 + "\n")
-        return
-
-    print(f"{'Codigo':<15}{'Repuesto':<25}{'Actual':>10}{'Minimo':>10}")
-    print("-" * 60)
-
-    for repuesto, cantidad, stock_minimo in repuestos_bajo_stock:
-        codigo = repuesto.get("codigo", repuesto.get("id", "N/A"))
-        nombre = repuesto.get("nombre", repuesto.get("repuesto", "N/A"))
-        print(f"{str(codigo):<15}{str(nombre):<25}{cantidad:>10.0f}{stock_minimo:>10.0f}")
-
-    print("!" * 60 + "\n")
+    print(f"{'Código':<15}{'Repuesto':<25}{'Actual':>12}{'Mínimo':>12}")
+    print("-" * 64)
+    for repuesto in bajos:
+        cantidad = obtener_numero(repuesto, ("cantidad", "stock", "existencias"))
+        minimo = obtener_numero(repuesto, ("stock_minimo", "minimo"))
+        print(
+            f"{str(repuesto.get('codigo_repuesto', 'N/A')):<15}"
+            f"{str(repuesto.get('nombre', 'N/A'))[:24]:<25}"
+            f"{cantidad:>12.0f}{minimo:>12.0f}"
+        )
+    print("!" * 64 + "\n")
+    return bajos
 
 
-def menu_reportes():
+def menu_reportes() -> None:
     while True:
-        print("\n" + "=" * 60)
-        print(f"{'MENU DE REPORTES':^60}")
-        print("=" * 60)
-        print("1. Ver Reporte General")
-        print("2. Ver Alertas de Stock")
-        print("3. Ver Correctivos Criticos")
-        print("4. Salir")
-        print("-" * 60)
-
-        opcion = input("Seleccione una opcion: ").strip()
-
-        if opcion == "1":
-            lista_equipos = cargar_maquinaria()
-            lista_preventivos = cargar_mantenimientos()
-            lista_correctivos = cargar_correctivos()
-            lista_stock = cargar_stock()
-
-            reporte = generar_reporte_general(
-                lista_equipos,
-                lista_preventivos,
-                lista_correctivos,
-                lista_stock,
-            )
-            mostrar_reporte_en_pantalla(reporte)
-        elif opcion == "2":
-            lista_stock = cargar_stock()
-            generar_alerta_stock(lista_stock)
-        elif opcion == "3":
-            lista_correctivos = cargar_correctivos()
-            generar_reporte_critico(lista_correctivos)
-        elif opcion == "4":
-            print("\nSaliendo del modulo de reportes...\n")
-            break
-        else:
-            print("\nOpcion no valida. Intente nuevamente.")
+        print("\n--- MENÚ DE REPORTES ---")
+        print("1. Ver reporte general")
+        print("2. Ver alertas de stock")
+        print("3. Ver correctivos críticos")
+        print("4. Volver")
+        opcion = input("Seleccione una opción: ").strip()
+        try:
+            if opcion == "1":
+                mostrar_reporte_en_pantalla(
+                    generar_reporte_general(
+                        cargar_maquinaria(),
+                        cargar_mantenimientos(),
+                        cargar_correctivos(),
+                        cargar_stock(),
+                    )
+                )
+            elif opcion == "2":
+                generar_alerta_stock(cargar_stock())
+            elif opcion == "3":
+                generar_reporte_critico(cargar_correctivos())
+            elif opcion == "4":
+                break
+            else:
+                print("Opción no válida.")
+        except (ValueError, OSError) as error:
+            print(f"Error: {error}")
 
 
 if __name__ == "__main__":
