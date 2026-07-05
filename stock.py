@@ -1,3 +1,5 @@
+import json
+import os
 
 ARCHIVO_STOCK = "stock.json"
 
@@ -284,129 +286,74 @@ def calcular_valor_total_stock(lista_stock):
         valor_total += repuesto["cantidad"] * repuesto["precio_unitario"]
 
     return valor_total
-def contar_total_equipos(lista_equipos):
-    """Cuenta el total de equipos registrados."""
-    return len(lista_equipos)
 
 
-def contar_equipos_por_estado(lista_equipos, estado):
-    """Cuenta equipos según su estado."""
-    total = 0
-
-    for equipo in lista_equipos:
-        if equipo["estado"] == estado:
-            total += 1
-
-    return total
-
-
-def contar_total_preventivos(lista_preventivos):
-    """Cuenta el total de mantenimientos preventivos."""
-    return len(lista_preventivos)
-
-
-def contar_preventivos_por_estado(lista_preventivos, estado):
-    """Cuenta preventivos según su estado."""
-    total = 0
-
-    for preventivo in lista_preventivos:
-        if preventivo["estado"] == estado:
-            total += 1
-
-    return total
-
-
-def calcular_costo_total_preventivos(lista_preventivos):
-    """Calcula el costo total de mantenimientos preventivos."""
-    costo_total = 0
-
-    for preventivo in lista_preventivos:
-        costo_total += preventivo["costo"]
-
-    return costo_total
-
-
-def contar_total_correctivos(lista_correctivos):
-    """Cuenta el total de fallas o tickets correctivos."""
-    return len(lista_correctivos)
-
-
-def contar_correctivos_por_estado(lista_correctivos, estado):
-    """Cuenta correctivos según su estado."""
-    total = 0
-
-    for correctivo in lista_correctivos:
-        if correctivo["estado"] == estado:
-            total += 1
-
-    return total
-
-
-def contar_correctivos_por_prioridad(lista_correctivos, prioridad):
-    """Cuenta correctivos según su prioridad."""
-    total = 0
-
-    for correctivo in lista_correctivos:
-        if correctivo["prioridad"] == prioridad:
-            total += 1
-
-    return total
-
-
-def contar_total_repuestos(lista_stock):
-    """Cuenta el total de repuestos registrados."""
-    return len(lista_stock)
-
-
-def contar_repuestos_bajo_stock(lista_stock):
-    """Cuenta repuestos con stock mínimo o por debajo."""
-    total = 0
-
-    for repuesto in lista_stock:
-        if repuesto["cantidad"] <= repuesto["stock_minimo"]:
-            total += 1
-
-    return total
-
-
-def calcular_valor_total_stock(lista_stock):
-    """Calcula el valor económico total del inventario."""
-    valor_total = 0
-
-    for repuesto in lista_stock:
-        valor_total += repuesto["cantidad"] * repuesto["precio_unitario"]
-
-    return valor_total
-
-
-def generar_reporte_general(
-    lista_equipos,
-    lista_preventivos,
-    lista_correctivos,
-    lista_stock
-):
-    """Genera un reporte general del sistema."""
-    reporte = {
-        "total_equipos": contar_total_equipos(lista_equipos),
-        "equipos_operativos": contar_equipos_por_estado(lista_equipos, "Operativo"),
-        "equipos_en_mantenimiento": contar_equipos_por_estado(lista_equipos, "En mantenimiento"),
-        "equipos_fuera_servicio": contar_equipos_por_estado(lista_equipos, "Fuera de servicio"),
-        "total_preventivos": contar_total_preventivos(lista_preventivos),
-        "preventivos_programados": contar_preventivos_por_estado(lista_preventivos, "Programado"),
-        "preventivos_en_proceso": contar_preventivos_por_estado(lista_preventivos, "En proceso"),
-        "preventivos_finalizados": contar_preventivos_por_estado(lista_preventivos, "Finalizado"),
-        "preventivos_cancelados": contar_preventivos_por_estado(lista_preventivos, "Cancelado"),
-        "costo_total_preventivos": calcular_costo_total_preventivos(lista_preventivos),
-        "total_correctivos": contar_total_correctivos(lista_correctivos),
-        "correctivos_reportados": contar_correctivos_por_estado(lista_correctivos, "Reportado"),
-        "correctivos_en_revision": contar_correctivos_por_estado(lista_correctivos, "En revisión"),
-        "correctivos_en_reparacion": contar_correctivos_por_estado(lista_correctivos, "En reparación"),
-        "correctivos_resueltos": contar_correctivos_por_estado(lista_correctivos, "Resuelto"),
-        "correctivos_cancelados": contar_correctivos_por_estado(lista_correctivos, "Cancelado"),
-        "correctivos_criticos": contar_correctivos_por_prioridad(lista_correctivos, "Crítica"),
-        "total_repuestos": contar_total_repuestos(lista_stock),
-        "repuestos_bajo_stock": contar_repuestos_bajo_stock(lista_stock),
-        "valor_total_stock": calcular_valor_total_stock(lista_stock)
-    }
-
-
+# =====================================================================
+# MENÚ INTERACTIVO AÑADIDO PARA LA INTEGRACIÓN
+# =====================================================================
+def menu_stock():
+    lista_stock = cargar_stock()
+    
+    while True:
+        print("\n" + "-"*40)
+        print(" GESTIÓN DE STOCK DE REPUESTOS")
+        print("-" * 40)
+        print("1. Registrar nuevo repuesto")
+        print("2. Mostrar inventario completo")
+        print("3. Actualizar cantidad de stock")
+        print("4. Ver repuestos con stock bajo")
+        print("5. Volver al Menú Principal")
+        
+        opcion = input("\nSeleccione una opción (1-5): ")
+        
+        if opcion == '1':
+            print("\n--- Registro de Repuesto ---")
+            codigo = input("Código de repuesto: ")
+            nombre = input("Nombre de repuesto: ")
+            print(f"Categorías válidas: {', '.join(CATEGORIAS_REPUESTO)}")
+            categoria = input("Categoría: ")
+            marca = input("Marca: ")
+            modelo = input("Modelo compatible: ")
+            cantidad = input("Cantidad inicial: ")
+            minimo = input("Stock mínimo: ")
+            precio = input("Precio unitario: ")
+            proveedor = input("Proveedor: ")
+            
+            exito, msj = registrar_repuesto(
+                lista_stock, codigo, nombre, categoria, marca, 
+                modelo, cantidad, minimo, precio, proveedor
+            )
+            print(f"\n[{'EXITO' if exito else 'ERROR'}] {msj}")
+            
+        elif opcion == '2':
+            inventario = listar_stock(lista_stock)
+            print("\n--- Inventario Actual ---")
+            if not inventario:
+                print("El inventario está vacío.")
+            else:
+                for rep in inventario:
+                    print(f"[{rep['codigo_repuesto']}] {rep['nombre']} - Cantidad: {rep['cantidad']} - Precio: ${rep['precio_unitario']}")
+                    
+        elif opcion == '3':
+            print("\n--- Actualizar Stock ---")
+            codigo = input("Ingrese el código del repuesto: ")
+            cantidad = input("Cantidad a sumar (positiva) o restar (negativa): ")
+            
+            exito, msj = actualizar_stock(lista_stock, codigo, cantidad)
+            print(f"\n[{'EXITO' if exito else 'ERROR'}] {msj}")
+            
+        elif opcion == '4':
+            bajo_stock = listar_repuestos_bajo_stock(lista_stock)
+            print("\n--- Repuestos en Nivel Crítico ---")
+            if not bajo_stock:
+                print("No hay repuestos por debajo del stock mínimo. Todo en orden.")
+            else:
+                for rep in bajo_stock:
+                    print(f"[{rep['codigo_repuesto']}] {rep['nombre']} - Quedan: {rep['cantidad']} (Mínimo: {rep['stock_minimo']})")
+                    
+        elif opcion == '5':
+            print("\nSaliendo del módulo de Stock...")
+            break
+            
+        else:
+            print("\n[!] Opción inválida. Intente de nuevo.")
